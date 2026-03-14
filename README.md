@@ -4,9 +4,8 @@ Littletable is a simple menstrual cycle tracker. It provides a calendar view
 with cycle annotations and a chart showing cycle lengths over time. It is meant
 to be self-hosted and used by one or more (anonymous) users.
 
-It can be used as a PWA, and should work in read-only offline mode.
-
-Littletable is a single-binary Go application with all static assets embedded.
+It can be used as a PWA, and should work in read-only offline mode. It is
+deployed as a single-binary Go application with all static assets embedded.
 Data is stored in a JSON file that is periodically auto-saved.
 
 ## Running

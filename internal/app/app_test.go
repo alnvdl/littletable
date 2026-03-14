@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/alnvdl/autosave"
 	"github.com/alnvdl/littletable/internal/app"
 )
 
@@ -92,6 +96,68 @@ func TestLoadInvalid(t *testing.T) {
 	err := a.Load(strings.NewReader("not json"))
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestLoadEmpty(t *testing.T) {
+	a := newTestApp(t)
+
+	if err := a.Load(strings.NewReader("")); err != nil {
+		t.Fatalf("Load failed for empty database: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := a.Save(&buf); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	var saved struct {
+		Cycles map[string][]string `json:"cycles"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &saved); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if saved.Cycles == nil {
+		t.Fatal("cycles map should be initialized")
+	}
+	if len(saved.Cycles) != 0 {
+		t.Fatalf("expected empty cycles map, got %d entries", len(saved.Cycles))
+	}
+}
+
+func TestNewWithEmptyAutoSaveFile(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "db.json")
+	if err := os.WriteFile(dbPath, []byte(""), 0600); err != nil {
+		t.Fatalf("failed to create empty database file: %v", err)
+	}
+
+	a, err := app.New(app.Params{
+		Tokens: testTokens(),
+		AutoSaveParams: autosave.Params{
+			FilePath: dbPath,
+			Interval: time.Second,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error creating app with empty database file: %v", err)
+	}
+	t.Cleanup(a.Close)
+
+	req := httptest.NewRequest("GET", "/cycles?token=tok1", nil)
+	rec := httptest.NewRecorder()
+	a.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got status %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var resp struct {
+		Dates []string `json:"dates"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if len(resp.Dates) != 0 {
+		t.Fatalf("expected no dates, got %v", resp.Dates)
 	}
 }
 

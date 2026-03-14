@@ -3,6 +3,7 @@ package app
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -106,12 +107,20 @@ func (a *App) Load(r io.Reader) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if err := json.NewDecoder(r).Decode(&a.db); err != nil {
-		return fmt.Errorf("decoding database: %w", err)
+	err := json.NewDecoder(r).Decode(&a.db)
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		// Ignoring a corrupted or empty file is intentional: we prefer to
+		// lose all data than prevent the application from starting.
+		a.db.Cycles = make(map[string][]string)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("cannot deserialize data: %w", err)
 	}
+
 	if a.db.Cycles == nil {
 		a.db.Cycles = make(map[string][]string)
 	}
+
 	return nil
 }
 

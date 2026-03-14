@@ -42,6 +42,7 @@ type App struct {
 	db db
 
 	autoSaver    *autosave.AutoSaver
+	handler      http.Handler
 	mux          *http.ServeMux
 	indexTmpl    *template.Template
 	manifestTmpl *template.Template
@@ -90,13 +91,14 @@ func New(params Params) (*App, error) {
 	a.mux.HandleFunc("DELETE /start", a.handleStartDelete)
 	a.mux.HandleFunc("GET /manifest.json", a.handleManifest)
 	a.mux.HandleFunc("GET /status", a.handleStatus)
+	a.handler = logRequests(logPanics(a.mux))
 
 	return a, nil
 }
 
 // ServeHTTP delegates to the internal mux.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	a.mux.ServeHTTP(w, r)
+	a.handler.ServeHTTP(w, r)
 }
 
 // Load reads the database from an io.Reader.
@@ -118,9 +120,7 @@ func (a *App) Save(w io.Writer) error {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(a.db)
+	return json.NewEncoder(w).Encode(a.db)
 }
 
 // Close shuts down the auto-saver.

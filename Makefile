@@ -38,9 +38,8 @@ CYCLE_DATES = '{ \
 .PHONY: dev test
 
 dev:
-	echo $(CYCLE_DATES) > /tmp/littletable_db.json && \
+	echo $(CYCLE_DATES) > db.json && \
 	TOKENS=$(TOKENS) \
-	DB_PATH=/tmp/littletable_db.json \
 	go run -buildvcs=true ./cmd/littletablesrv
 
 test:

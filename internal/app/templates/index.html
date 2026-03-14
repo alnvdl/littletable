@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>littletable</title>
+    <link rel="stylesheet" href="/static/littletable.css">
+    <link rel="stylesheet" href="/static/littletable_calendar.css">
+    <link rel="stylesheet" href="/static/littletable_chart.css">
+    <link rel="manifest" href="/manifest.json?token={{.Token}}">
+    <link rel="apple-touch-icon" sizes="320x320" href="/static/icon320.png">
+</head>
+
+<body>
+    <header>
+        <div class="header-left">
+            <img src="/static/logo.svg" />
+            <h1>Littletable</h1>
+        </div>
+        <button class="today-btn" id="todayBtn">
+            <img src="/static/today.svg" />
+            Today
+        </button>
+    </header>
+
+    <div class="calendar" id="calendar">
+        <div class="calendar-header">
+            <button class="nav-btn nav-btn-loading" id="prevBtn" aria-label="Previous month">&#8249;</button>
+            <div style="text-align:center">
+                <h2 id="monthLabel"></h2>
+                <div class="year-label" id="yearLabel"></div>
+            </div>
+            <button class="nav-btn nav-btn-loading" id="nextBtn" aria-label="Next month">&#8250;</button>
+        </div>
+
+        <div class="weekdays" id="weekdays"></div>
+
+        <div class="grid-viewport" id="gridViewport">
+            <div class="grid-layer current" id="gridCurrent"></div>
+        </div>
+
+    </div>
+
+    <div class="chart" id="chart">
+        <div class="chart-viewport" id="chartViewport">
+            <div class="chart-layer current" id="chartCurrent"></div>
+        </div>
+    </div>
+
+    <dialog class="error-dialog" id="mutationErrorDialog" aria-labelledby="mutationErrorTitle">
+        <p class="error-dialog-message" id="mutationErrorTitle">
+            There was an error updating cycle dates, please try again later.
+        </p>
+        <button class="error-dialog-close" id="mutationErrorCloseBtn" type="button">Close</button>
+    </dialog>
+
+    <script src="/static/littletable_calendar.js"></script>
+    <script src="/static/littletable_chart.js"></script>
+    <script src="/static/littletable.js"></script>
+    <script>initApp();</script>
+</body>
+
+</html>

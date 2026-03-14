@@ -1,0 +1,128 @@
+/* Chart section. */
+.chart {
+    width: 100%;
+    max-width: 480px;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-top: 16px;
+}
+
+.chart-viewport {
+    position: relative;
+    overflow: hidden;
+    flex: 1;
+    min-height: 0;
+}
+
+.chart-layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    will-change: transform;
+}
+
+.chart-layer.current {
+    position: relative;
+    height: 100%;
+}
+
+/* The area where bars and average line live. */
+.chart-bar-area {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0 4px;
+    margin-right: 48px;
+    position: relative;
+}
+
+.bar-track {
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    gap: 6px;
+    height: 100%;
+}
+
+/* Individual bar wrapper. */
+.bar-slot {
+    flex: 1;
+    max-width: 36px;
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+}
+
+.bar {
+    width: 100%;
+    border-radius: 6px 6px 0 0;
+    background: var(--accent);
+    min-height: 0;
+    position: relative;
+    transition: height var(--transition-duration) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bar.projected {
+    background: var(--bg);
+    border: 1px dashed var(--accent);
+    border-bottom: none;
+}
+
+.bar-value {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--fg);
+    text-align: center;
+    white-space: nowrap;
+    padding-bottom: 2px;
+    line-height: 1;
+}
+
+/* Average overlay — sits above the bar area so the label
+   never collides with sliding bars during transitions. */
+.chart-avg-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+}
+
+/* Average line overlay. */
+.avg-line {
+    position: absolute;
+    left: 4px;
+    right: 52px;
+    height: 0;
+    border-top: 1px dashed var(--accent);
+    opacity: 0.5;
+    pointer-events: none;
+    transition: bottom var(--transition-duration) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.avg-label {
+    position: absolute;
+    right: 8px;
+    transform: translateY(-50%);
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--accent);
+    white-space: nowrap;
+    transition: bottom var(--transition-duration) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Chart bar enter animation. */
+.bar-enter {
+    animation: barGrow var(--transition-duration) cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes barGrow {
+    0%   { transform: scaleY(0); opacity: 0; }
+    100% { transform: scaleY(1); opacity: 1; }
+}

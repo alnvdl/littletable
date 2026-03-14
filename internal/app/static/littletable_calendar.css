@@ -1,0 +1,275 @@
+/* Calendar container. */
+.calendar {
+    --ann-size: 0.6rem;
+    width: 100%;
+    max-width: 480px;
+    user-select: none;
+    flex-shrink: 0;
+    touch-action: pan-x;
+}
+
+/* Month / year header with nav arrows. */
+.calendar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 8px;
+    margin-bottom: 8px;
+}
+
+.calendar-header h2 {
+    font-size: 1.3rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    transition: opacity var(--transition-duration) ease;
+}
+
+.nav-btn {
+    appearance: none;
+    border: none;
+    background: var(--header-bg);
+    color: var(--fg);
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    font-size: 1.1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, transform 0.15s ease, opacity var(--transition-duration) ease;
+}
+
+.nav-btn-loading {
+    opacity: 0;
+}
+
+.nav-btn:hover {
+    background: var(--border);
+}
+
+.nav-btn:active {
+    transform: scale(0.92);
+}
+
+/* Weekday labels. */
+.weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+    padding: 0 2px;
+    margin-bottom: 4px;
+}
+
+.weekdays span {
+    text-align: center;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    padding: 4px 0;
+}
+
+/* Grid viewport — clips the sliding layers. */
+.grid-viewport {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--radius);
+}
+
+/* Each month grid layer. */
+.grid-layer {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+    padding: 2px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    will-change: transform, opacity;
+}
+
+.grid-layer.current {
+    position: relative;
+}
+
+/* Day cell. */
+.day {
+    aspect-ratio: 1;
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    font-size: 0.95rem;
+    font-weight: 500;
+    border-radius: var(--radius);
+    cursor: default;
+    transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.day-label,
+.day-annotation {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    line-height: 1;
+}
+
+.day-label {
+    grid-row: 1;
+}
+
+.day-annotation {
+    grid-row: 2;
+    align-items: flex-start;
+    padding-top: calc(var(--ann-size) * 0.3);
+}
+
+.day.in-month {
+    color: var(--fg);
+}
+
+.day .ann-dot {
+    width: var(--ann-size);
+    height: var(--ann-size);
+    border-radius: 50%;
+}
+
+.day .ann-rect {
+    width: var(--ann-size);
+    height: calc(var(--ann-size) * 0.5);
+    border-radius: 1px;
+}
+
+.day .ann-drop {
+    width: var(--ann-size);
+    height: var(--ann-size);
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(135deg);
+    transform-origin: 50% 50%;
+}
+
+.day .ann-dot.ann-red,
+.day .ann-rect.ann-red,
+.day .ann-drop.ann-red    { background: var(--ann-red); }
+.day .ann-dot.ann-yellow,
+.day .ann-rect.ann-yellow,
+.day .ann-drop.ann-yellow { background: var(--ann-yellow); }
+.day .ann-dot.ann-green,
+.day .ann-rect.ann-green,
+.day .ann-drop.ann-green  { background: var(--ann-green); }
+
+.day.out-month {
+    opacity: 0.5;
+}
+
+.day.today {
+    --today-scale: 1.2;
+    background: #ffffff;
+    font-weight: 700;
+    border: 2px solid var(--accent);
+}
+
+.day.today:hover {
+    background: #ffffff;
+}
+
+.day.today .day-annotation {
+    align-items: center;
+    padding-top: 0;
+}
+
+.day.today .day-label {
+    font-size: calc(1em * var(--today-scale));
+}
+
+.day.today .ann-dot,
+.day.today .ann-drop {
+    width: calc(var(--ann-size) * var(--today-scale));
+    height: calc(var(--ann-size) * var(--today-scale));
+}
+
+.day.today .ann-rect {
+    width: calc(var(--ann-size) * var(--today-scale));
+    height: calc(var(--ann-size) * 0.5 * var(--today-scale));
+}
+
+@media (hover: hover) {
+    .day.in-month:hover {
+        background: var(--header-bg);
+    }
+}
+
+/* Staggered cell entrance. */
+.cell-enter {
+    animation: cellPop var(--transition-duration) cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes cellPop {
+    0%   { transform: scale(0.0) translateY(6px); }
+    100% { transform: scale(1) translateY(0); }
+}
+
+/* "Today" button (lives in header). */
+.today-btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg);
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 20px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.today-btn svg {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+}
+
+@media (hover: hover) {
+    .today-btn:hover {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+    }
+}
+
+/* Year label under the month. */
+.year-label {
+    text-align: center;
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: 2px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    transition: opacity var(--transition-duration) ease;
+}
+
+/* Responsive tweaks. */
+@media (max-width: 720px) {
+    .calendar-header h2 {
+        font-size: 1.1rem;
+    }
+    .day {
+        font-size: 0.85rem;
+        border-radius: 8px;
+    }
+    .day .ann-dot,
+    .day .ann-drop {
+        width: calc(var(--ann-size) * 0.9);
+        height: calc(var(--ann-size) * 0.9);
+    }
+    .day .ann-rect {
+        width: calc(var(--ann-size) * 0.9);
+        height: calc(var(--ann-size) * 0.5 * 0.9);
+    }
+}

@@ -1,0 +1,29 @@
+{
+    "short_name": "Littletable",
+    "name": "Littletable",
+    "description": "A menstrual cycle tracker.",
+    "start_url": "/?token={{.Token}}",
+    "display": "standalone",
+    "icons": [
+        {
+            "src": "/static/icon16.png",
+            "type": "image/png",
+            "sizes": "16x16"
+        },
+        {
+            "src": "/static/icon48.png",
+            "type": "image/png",
+            "sizes": "48x48"
+        },
+        {
+            "src": "/static/icon192.png",
+            "type": "image/png",
+            "sizes": "192x192"
+        },
+        {
+            "src": "/static/icon.svg",
+            "type": "image/svg+xml",
+            "sizes": "any"
+        }
+    ]
+}

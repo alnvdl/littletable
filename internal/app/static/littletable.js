@@ -46,18 +46,32 @@ function parseDate(s) {
 }
 
 // Load cycle data from the API.
-function loadCycleData(callback) {
+function loadCycleData(callback, options) {
+    options = options || {};
     var xhr = new XMLHttpRequest();
     xhr.open("GET", "/cycles?token=" + encodeURIComponent(getToken()));
+    if (options.forceNetwork) {
+        xhr.setRequestHeader("X-Littletable-Network-Only", "1");
+    }
     xhr.onload = function() {
-        if (xhr.status === 200) {
+        if (xhr.status !== 200) {
+            callback(false, false);
+            return;
+        }
+
+        try {
             var resp = JSON.parse(xhr.responseText);
             cycleStrategy = resp.strategy;
             cycleData = resp.dates.map(parseDate);
+            callback(
+                true,
+                xhr.getResponseHeader("X-Littletable-Cycles-Source") === "cache"
+            );
+        } catch (_) {
+            callback(false, false);
         }
-        callback();
     };
-    xhr.onerror = function() {callback();};
+    xhr.onerror = function() {callback(false, false);};
     xhr.send();
 }
 
@@ -199,14 +213,14 @@ function getDayColor(dayInCycle, cycleLen, strategy) {
 
 // Application initialization — called after all other scripts are loaded.
 function initApp() {
-    loadCycleData(function() {
-        initUI();
-    });
+    initUI();
 }
 
 function initUI() {
-    var MUTATION_ERROR_MESSAGE =
-        "Cannot update cycle dates, please try again later.";
+    var LOAD_ERROR_MESSAGE = "✖ Error loading cycles";
+    var SAVE_ERROR_MESSAGE = "✖ Error saving cycle";
+    var LOADING_TEXT = "Loading...";
+    var SAVING_TEXT = "Saving...";
     var OFFLINE_ERROR_MESSAGE =
         "Cycle dates cannot be changed when you are offline.";
 
@@ -230,6 +244,10 @@ function initUI() {
     var yearLabel = document.getElementById("yearLabel");
     var gridViewport = document.getElementById("gridViewport");
     var chartViewport = document.getElementById("chartViewport");
+    var headerStatus = document.getElementById("headerStatus");
+    var headerStatusText = document.getElementById("headerStatusText");
+    var startupOverlay = document.getElementById("startupOverlay");
+    var startupOverlayText = document.getElementById("startupOverlayText");
     var mutationErrorDialog = document.getElementById("mutationErrorDialog");
     var mutationErrorTitle = document.getElementById("mutationErrorTitle");
     var mutationErrorCloseBtn = document.getElementById("mutationErrorCloseBtn");
@@ -239,6 +257,55 @@ function initUI() {
         grid: document.getElementById("gridCurrent"),
         chart: document.getElementById("chartCurrent")
     };
+
+    var cyclesLoadInFlight = false;
+    var headerStatusClearTimer = null;
+    var initialAssetsReady = document.readyState === "complete";
+    var initialCyclesReady = false;
+
+    if (startupOverlayText) {
+        startupOverlayText.textContent = LOADING_TEXT;
+    }
+
+    function maybeHideStartupOverlay() {
+        if (!startupOverlay) return;
+        if (!initialAssetsReady || !initialCyclesReady) return;
+        startupOverlay.classList.add("hidden");
+    }
+
+    function cancelHeaderStatusClear() {
+        if (headerStatusClearTimer !== null) {
+            clearTimeout(headerStatusClearTimer);
+            headerStatusClearTimer = null;
+        }
+    }
+
+    function clearHeaderStatus() {
+        if (!headerStatus || !headerStatusText) return;
+        cancelHeaderStatusClear();
+        headerStatus.classList.remove("visible");
+        headerStatusClearTimer = setTimeout(function() {
+            headerStatus.classList.remove("error");
+            headerStatusText.textContent = "";
+            headerStatusClearTimer = null;
+        }, 130);
+    }
+
+    function showHeaderLoading(text) {
+        if (!headerStatus || !headerStatusText) return;
+        cancelHeaderStatusClear();
+        headerStatus.classList.add("visible");
+        headerStatus.classList.remove("error");
+        headerStatusText.textContent = text || LOADING_TEXT;
+    }
+
+    function showHeaderError(message) {
+        if (!headerStatus || !headerStatusText) return;
+        cancelHeaderStatusClear();
+        headerStatus.classList.add("visible");
+        headerStatus.classList.add("error");
+        headerStatusText.textContent = message;
+    }
 
     function updateHeader(year, month) {
         monthLabel.textContent = MONTH_NAMES[month];
@@ -476,16 +543,52 @@ function initUI() {
         });
     }
 
+    function loadAndRenderCycles(allowRefreshFromCache) {
+        if (cyclesLoadInFlight) return;
+
+        cyclesLoadInFlight = true;
+        showHeaderLoading();
+
+        loadCycleData(function(ok, fromCache) {
+            if (!ok) {
+                cyclesLoadInFlight = false;
+                showHeaderError(LOAD_ERROR_MESSAGE);
+                return;
+            }
+
+            renderCurrentViews();
+            initialCyclesReady = true;
+            maybeHideStartupOverlay();
+
+            if (allowRefreshFromCache && fromCache) {
+                loadCycleData(function(refreshOK) {
+                    cyclesLoadInFlight = false;
+                    if (!refreshOK) {
+                        showHeaderError(LOAD_ERROR_MESSAGE);
+                        return;
+                    }
+
+                    renderCurrentViews();
+                    clearHeaderStatus();
+                }, {forceNetwork: true});
+                return;
+            }
+
+            cyclesLoadInFlight = false;
+            clearHeaderStatus();
+        });
+    }
+
     function onMutationDone(newStart, mutation, ok) {
         mutationInFlight = false;
         if (ok) {
             // Re-fetch cycles so the service worker caches the updated data.
-            loadCycleData(function() {});
+            loadAndRenderCycles(false);
             return;
         }
 
         rollbackOptimisticMutation(newStart, mutation);
-        showMutationErrorDialog(MUTATION_ERROR_MESSAGE);
+        showHeaderError(SAVE_ERROR_MESSAGE);
     }
 
     function applyCycleStartMutation(cell) {
@@ -502,6 +605,7 @@ function initUI() {
         var newStart = parseCellDate(cell);
         var mutation = applyOptimisticMutation(newStart);
         mutationInFlight = true;
+        showHeaderLoading(SAVING_TEXT);
 
         var done = function(ok) {
             onMutationDone(newStart, mutation, ok);
@@ -612,6 +716,16 @@ function initUI() {
     wireResizeSync();
     wireErrorDialog();
     setupServiceWorker();
+    loadAndRenderCycles(true);
+
+    if (!initialAssetsReady) {
+        window.addEventListener("load", function() {
+            initialAssetsReady = true;
+            maybeHideStartupOverlay();
+        }, {once: true});
+    } else {
+        maybeHideStartupOverlay();
+    }
 
     // Triple-click/triple-tap on a day cell to mark that date as a new cycle start.
     gridViewport.addEventListener("click", handleTripleClick);

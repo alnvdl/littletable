@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>littletable</title>
+    <title>Littletable</title>
     <link rel="stylesheet" href="/static/littletable.css">
     <link rel="stylesheet" href="/static/littletable_calendar.css">
     <link rel="stylesheet" href="/static/littletable_chart.css">
@@ -13,10 +13,21 @@
 </head>
 
 <body>
+    <div class="startup-overlay" id="startupOverlay" aria-live="polite" role="status">
+        <div class="startup-overlay-content">
+            <span class="header-status-spinner" aria-hidden="true"></span>
+            <span class="startup-overlay-text" id="startupOverlayText">Loading...</span>
+        </div>
+    </div>
+
     <header>
         <div class="header-left">
             <img src="/static/logo.svg" />
             <h1>Littletable</h1>
+        </div>
+        <div class="header-status" id="headerStatus" aria-live="polite" role="status">
+            <span class="header-status-spinner" id="headerStatusSpinner" aria-hidden="true"></span>
+            <span class="header-status-text" id="headerStatusText"></span>
         </div>
         <button class="today-btn" id="todayBtn">
             <img src="/static/today.svg" />

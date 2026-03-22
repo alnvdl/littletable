@@ -49,44 +49,93 @@ function isCyclesRequest(request) {
     return isSameOrigin(url) && url.pathname === "/cycles";
 }
 
+function isStaticRequest(request) {
+    const url = new URL(request.url);
+    return isSameOrigin(url) && url.pathname.startsWith("/static/");
+}
+
+function cacheResponse(request, response) {
+    if (!response || !response.ok) {
+        return;
+    }
+
+    caches.open(CACHE_NAME).then(cache => {
+        cache.put(request, response.clone());
+    });
+}
+
+function fetchAndCache(request) {
+    return fetch(request).then(response => {
+        cacheResponse(request, response);
+        return response;
+    });
+}
+
+function withCyclesSourceHeader(response, source) {
+    const headers = new Headers(response.headers);
+    headers.set("X-Littletable-Cycles-Source", source);
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+    });
+}
+
+function shouldBypassCyclesCache(request) {
+    return request.headers.get("X-Littletable-Network-Only") === "1";
+}
+
 self.addEventListener("fetch", event => {
     if (event.request.method !== "GET") return;
 
     if (isCyclesRequest(event.request)) {
+        if (shouldBypassCyclesCache(event.request)) {
+            event.respondWith(fetchAndCache(event.request));
+            return;
+        }
+
         event.respondWith(
-            fetch(event.request)
-                .then(response => {
-                    if (response && response.ok) {
-                        const responseClone = response.clone();
-                        caches.open(CACHE_NAME).then(cache => {
-                            cache.put(event.request, responseClone);
-                        });
+            caches.match(event.request).then(cached => {
+                if (cached) {
+                    event.waitUntil(fetchAndCache(event.request));
+                    return withCyclesSourceHeader(cached, "cache");
+                }
+
+                return fetchAndCache(event.request).then(response => {
+                    if (!response || !response.ok) {
+                        return response;
                     }
-                    return response;
+                    return withCyclesSourceHeader(response, "network");
                 })
-                .catch(() => {
-                    return caches.match(event.request);
-                })
+            }).catch(() => {
+                return Response.error();
+            })
+        );
+        return;
+    }
+
+    if (isStaticRequest(event.request)) {
+        event.respondWith(
+            caches.match(event.request).then(cached => {
+                if (cached) {
+                    event.waitUntil(fetchAndCache(event.request));
+                    return cached;
+                }
+
+                return fetchAndCache(event.request);
+            }).catch(() => {
+                return Response.error();
+            })
         );
         return;
     }
 
     event.respondWith(
-        // Try the network first.
-        fetch(event.request)
+        fetchAndCache(event.request)
             .then(response => {
-                // Update the cache if there's a hit.
-                const responseClone = response.clone();
-                const requestURL = new URL(event.request.url);
-                if (response && response.ok && isSameOrigin(requestURL)) {
-                    caches.open(CACHE_NAME).then(cache => {
-                        cache.put(event.request, responseClone);
-                    });
-                }
                 return response;
             })
             .catch(() => {
-                // Cannot fetch, fallback to cache.
                 return caches.match(event.request).then(cached => {
                     if (cached) return cached;
                     return Response.error();

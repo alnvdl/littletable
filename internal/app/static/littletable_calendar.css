@@ -27,7 +27,7 @@
 .nav-btn {
     appearance: none;
     border: none;
-    background: var(--header-bg);
+    background: none;
     color: var(--fg);
     width: 40px;
     height: 40px;
@@ -42,10 +42,6 @@
 
 .nav-btn-loading {
     opacity: 0;
-}
-
-.nav-btn:hover {
-    background: var(--border);
 }
 
 .nav-btn:active {
@@ -227,7 +223,8 @@
     align-items: center;
     gap: 4px;
     line-height: 1;
-    transition: background 0.15s ease, border-color 0.15s ease;
+    transition: background 0.15s ease, border-color 0.15s ease,
+        transform 0.12s ease, box-shadow 0.12s ease;
 }
 
 .today-btn svg {
@@ -241,6 +238,13 @@
         background: var(--accent-soft);
         border-color: var(--accent);
     }
+}
+
+.today-btn:active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    transform: translateY(1px) scale(0.97);
+    box-shadow: inset 0 1px 2px rgba(232, 108, 108, 0.24);
 }
 
 /* Year label under the month. */

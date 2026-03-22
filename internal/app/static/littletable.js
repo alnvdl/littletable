@@ -217,8 +217,8 @@ function initApp() {
 }
 
 function initUI() {
-    var LOAD_ERROR_MESSAGE = "✖ Error loading cycles";
-    var SAVE_ERROR_MESSAGE = "✖ Error saving cycle";
+    var LOAD_ERROR_MESSAGE = "✖︎ Error loading cycles";
+    var SAVE_ERROR_MESSAGE = "✖︎ Error saving cycle";
     var LOADING_TEXT = "Loading...";
     var SAVING_TEXT = "Saving...";
     var OFFLINE_ERROR_MESSAGE =
@@ -260,6 +260,8 @@ function initUI() {
 
     var cyclesLoadInFlight = false;
     var headerStatusClearTimer = null;
+    var pendingCyclesReload = null;
+    var mutationVersion = 0;
     var initialAssetsReady = document.readyState === "complete";
     var initialCyclesReady = false;
 
@@ -543,16 +545,52 @@ function initUI() {
         });
     }
 
-    function loadAndRenderCycles(allowRefreshFromCache) {
-        if (cyclesLoadInFlight) return;
+    function queueCyclesReload(options) {
+        pendingCyclesReload = {
+            allowRefreshFromCache: !!options.allowRefreshFromCache,
+            forceNetwork: !!options.forceNetwork,
+            loadingText: options.loadingText || LOADING_TEXT,
+        };
+    }
+
+    function runPendingCyclesReload() {
+        if (!pendingCyclesReload || cyclesLoadInFlight) return;
+        var options = pendingCyclesReload;
+        pendingCyclesReload = null;
+        loadAndRenderCycles(options);
+    }
+
+    function loadAndRenderCycles(options) {
+        options = options || {};
+        var allowRefreshFromCache = !!options.allowRefreshFromCache;
+        var forceNetwork = !!options.forceNetwork;
+        var loadingText = options.loadingText || LOADING_TEXT;
+
+        if (cyclesLoadInFlight) {
+            queueCyclesReload({
+                allowRefreshFromCache: allowRefreshFromCache,
+                forceNetwork: forceNetwork,
+                loadingText: loadingText,
+            });
+            return;
+        }
 
         cyclesLoadInFlight = true;
-        showHeaderLoading();
+        showHeaderLoading(loadingText);
+        var loadVersion = mutationVersion;
 
         loadCycleData(function(ok, fromCache) {
             if (!ok) {
                 cyclesLoadInFlight = false;
                 showHeaderError(LOAD_ERROR_MESSAGE);
+                runPendingCyclesReload();
+                return;
+            }
+
+            // Ignore stale loads that started before a newer mutation.
+            if (loadVersion !== mutationVersion) {
+                cyclesLoadInFlight = false;
+                runPendingCyclesReload();
                 return;
             }
 
@@ -565,25 +603,38 @@ function initUI() {
                     cyclesLoadInFlight = false;
                     if (!refreshOK) {
                         showHeaderError(LOAD_ERROR_MESSAGE);
+                        runPendingCyclesReload();
+                        return;
+                    }
+
+                    // Ignore stale refreshes that started before a newer mutation.
+                    if (loadVersion !== mutationVersion) {
+                        runPendingCyclesReload();
                         return;
                     }
 
                     renderCurrentViews();
                     clearHeaderStatus();
+                    runPendingCyclesReload();
                 }, {forceNetwork: true});
                 return;
             }
 
             cyclesLoadInFlight = false;
             clearHeaderStatus();
-        });
+            runPendingCyclesReload();
+        }, {forceNetwork: forceNetwork});
     }
 
     function onMutationDone(newStart, mutation, ok) {
         mutationInFlight = false;
         if (ok) {
-            // Re-fetch cycles so the service worker caches the updated data.
-            loadAndRenderCycles(false);
+            // Re-fetch cycles from network only after save/delete confirmation.
+            loadAndRenderCycles({
+                allowRefreshFromCache: false,
+                forceNetwork: true,
+                loadingText: SAVING_TEXT,
+            });
             return;
         }
 
@@ -605,6 +656,7 @@ function initUI() {
         var newStart = parseCellDate(cell);
         var mutation = applyOptimisticMutation(newStart);
         mutationInFlight = true;
+        mutationVersion++;
         showHeaderLoading(SAVING_TEXT);
 
         var done = function(ok) {
@@ -716,7 +768,7 @@ function initUI() {
     wireResizeSync();
     wireErrorDialog();
     setupServiceWorker();
-    loadAndRenderCycles(true);
+    loadAndRenderCycles({allowRefreshFromCache: true, forceNetwork: false});
 
     if (!initialAssetsReady) {
         window.addEventListener("load", function() {

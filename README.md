@@ -1,5 +1,8 @@
 # alnvdl/littletable
 
+> This application is an experiment in vibe coding, it's not representative of
+> my usual work style. See [How this was built](#how-this-was-built).
+
 Littletable is a simple menstrual cycle tracker. It provides a calendar view
 with cycle annotations and a chart showing cycle lengths over time. It is meant
 to be self-hosted and used by one or more (anonymous) users.
@@ -12,6 +15,8 @@ Data is stored in a JSON file that is periodically auto-saved.
 To run Littletable locally, install Go 1.25+ and run `make dev`.
 
 To access the web interface, go to http://localhost:8080/?token=alice.
+
+To export data, triple-click on the logo.
 
 ## Environment variables
 The following environment variables can be used to configure Littletable:
@@ -116,7 +121,8 @@ offline frontend at first with mock data, and then adding a backend.
 The code is not very polished, but shouldn't be terrible either. This is an
 experiment at working with LLMs at a much higher level than I'm used to: asking
 for vague things like "an elegant UI with a calendar and bar charts" and
-dictating the backend design just at a very superficial level.
+dictating the backend design just at a very superficial level. At times, I
+pointed to other examples of applications that I coded myself.
 
 This application intentionally avoids using external dependencies to make it
 easier to maintain many years from now.

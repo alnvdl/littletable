@@ -211,555 +211,630 @@ function getDayColor(dayInCycle, cycleLen, strategy) {
     return inMidWindow ? "yellow" : "green";
 }
 
+// --- UI constants ---
+
+var LOAD_ERROR_MESSAGE = "✖︎ Error loading cycles";
+var SAVE_ERROR_MESSAGE = "✖︎ Error saving cycle";
+var LOADING_TEXT = "Loading...";
+var SAVING_TEXT = "Saving...";
+var OFFLINE_ERROR_MESSAGE =
+    "Cycle dates cannot be changed when you are offline.";
+var TOUCH_TAP_WINDOW_MS = 420;
+var TOUCH_CLICK_SUPPRESS_MS = 700;
+
+// Shared UI state — populated by initUI().
+var ui = null;
+
+function createUIState() {
+    return {
+        currentYear: 0,
+        currentMonth: 0,
+        targetYear: 0,
+        targetMonth: 0,
+        transitionCleanup: null,
+        mutationInFlight: false,
+        touchTapCount: 0,
+        touchTapLastAt: 0,
+        touchTapLastDate: "",
+        suppressClickUntil: 0,
+        cyclesLoadInFlight: false,
+        headerStatusClearTimer: null,
+        pendingCyclesReload: null,
+        mutationVersion: 0,
+        initialAssetsReady: document.readyState === "complete",
+        initialCyclesReady: false,
+        // DOM references.
+        monthLabel: document.getElementById("monthLabel"),
+        yearLabel: document.getElementById("yearLabel"),
+        gridViewport: document.getElementById("gridViewport"),
+        chartViewport: document.getElementById("chartViewport"),
+        headerStatus: document.getElementById("headerStatus"),
+        headerStatusText: document.getElementById("headerStatusText"),
+        startupOverlay: document.getElementById("startupOverlay"),
+        startupOverlayText: document.getElementById("startupOverlayText"),
+        mutationErrorDialog: document.getElementById("mutationErrorDialog"),
+        mutationErrorTitle: document.getElementById("mutationErrorTitle"),
+        mutationErrorCloseBtn: document.getElementById("mutationErrorCloseBtn"),
+        // Mutable reference to active grid/chart layers.
+        state: {
+            grid: document.getElementById("gridCurrent"),
+            chart: document.getElementById("chartCurrent")
+        }
+    };
+}
+
+// --- Startup overlay ---
+
+function maybeHideStartupOverlay() {
+    if (!ui.startupOverlay) return;
+    if (!ui.initialAssetsReady || !ui.initialCyclesReady) return;
+    ui.startupOverlay.classList.add("hidden");
+}
+
+function onAssetsLoadComplete() {
+    ui.initialAssetsReady = true;
+    maybeHideStartupOverlay();
+}
+
+// --- Header status ---
+
+function cancelHeaderStatusClear() {
+    if (ui.headerStatusClearTimer !== null) {
+        clearTimeout(ui.headerStatusClearTimer);
+        ui.headerStatusClearTimer = null;
+    }
+}
+
+function clearHeaderStatus() {
+    if (!ui.headerStatus || !ui.headerStatusText) return;
+    cancelHeaderStatusClear();
+    ui.headerStatus.classList.remove("visible");
+    ui.headerStatusClearTimer = setTimeout(function() {
+        ui.headerStatus.classList.remove("error");
+        ui.headerStatusText.textContent = "";
+        ui.headerStatusClearTimer = null;
+    }, 130);
+}
+
+function showHeaderLoading(text) {
+    if (!ui.headerStatus || !ui.headerStatusText) return;
+    cancelHeaderStatusClear();
+    ui.headerStatus.classList.add("visible");
+    ui.headerStatus.classList.remove("error");
+    ui.headerStatusText.textContent = text || LOADING_TEXT;
+}
+
+function showHeaderError(message) {
+    if (!ui.headerStatus || !ui.headerStatusText) return;
+    cancelHeaderStatusClear();
+    ui.headerStatus.classList.add("visible");
+    ui.headerStatus.classList.add("error");
+    ui.headerStatusText.textContent = message;
+}
+
+function updateHeader(year, month) {
+    ui.monthLabel.textContent = MONTH_NAMES[month];
+    ui.yearLabel.textContent = year;
+    ui.monthLabel.style.opacity = "1";
+    ui.yearLabel.style.opacity = "1";
+}
+
+// --- Grid/view helpers ---
+
+function syncGridHeight() {
+    ui.gridViewport.style.height = ui.state.grid.offsetHeight + "px";
+}
+
+function setActiveMonth(year, month) {
+    ui.currentYear = year;
+    ui.currentMonth = month;
+    ui.targetYear = year;
+    ui.targetMonth = month;
+    updateHeader(year, month);
+}
+
+function renderCurrentViews() {
+    var days = buildDays(ui.currentYear, ui.currentMonth);
+    renderGrid(ui.state.grid, days, false);
+    var bars = buildChartData(ui.currentYear, ui.currentMonth);
+    renderChart(ui.state.chart, bars, false);
+    syncGridHeight();
+}
+
+// --- Error dialog ---
+
+function showMutationErrorDialog(message) {
+    if (ui.mutationErrorTitle && message) {
+        ui.mutationErrorTitle.textContent = message;
+    }
+    if (ui.mutationErrorDialog && !ui.mutationErrorDialog.open) {
+        ui.mutationErrorDialog.showModal();
+    }
+}
+
+function showBusyShake() {
+    document.body.classList.remove("page-busy-shake");
+    // Force reflow so repeated interactions can replay the animation.
+    void document.body.offsetWidth;
+    document.body.classList.add("page-busy-shake");
+}
+
+// --- Cycle mutation helpers ---
+
+function parseCellDate(cell) {
+    var parts = cell.dataset.date.split("-");
+    return new Date(
+        parseInt(parts[0], 10),
+        parseInt(parts[1], 10) - 1,
+        parseInt(parts[2], 10)
+    );
+}
+
+function findCycleStartIndex(date) {
+    for (var i = 0; i < cycleData.length; i++) {
+        if (cycleData[i].getTime() === date.getTime()) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+function applyOptimisticMutation(newStart) {
+    var foundIndex = findCycleStartIndex(newStart);
+    var found = foundIndex !== -1;
+
+    if (found) {
+        cycleData.splice(foundIndex, 1);
+    } else {
+        cycleData.push(newStart);
+        cycleData.sort(function(a, b) {return a - b;});
+    }
+
+    renderCurrentViews();
+    return {found: found, foundIndex: foundIndex};
+}
+
+function rollbackOptimisticMutation(newStart, mutation) {
+    if (mutation.found) {
+        cycleData.splice(mutation.foundIndex, 0, newStart);
+    } else {
+        var rollbackIndex = findCycleStartIndex(newStart);
+        if (rollbackIndex !== -1) {
+            cycleData.splice(rollbackIndex, 1);
+        }
+    }
+
+    renderCurrentViews();
+}
+
+// --- Navigation ---
+
+// Cancel any running transition and snap to its target state.
+function cancelTransition() {
+    if (!ui.transitionCleanup) return;
+    ui.transitionCleanup();
+    ui.transitionCleanup = null;
+}
+
+// Navigate to a given month with a directional slide animation.
+function goTo(year, month, direction) {
+    if (year === ui.targetYear && month === ui.targetMonth) return;
+
+    if (ui.transitionCleanup) {
+        cancelTransition();
+    }
+
+    ui.targetYear = year;
+    ui.targetMonth = month;
+
+    // Start chart transition.
+    var chartTransition = transitionChart(
+        ui.chartViewport, ui.state, year, month, direction,
+        ui.currentYear, ui.currentMonth
+    );
+
+    // Start calendar transition.
+    var calIncoming = transitionGrid(
+        ui.gridViewport, ui.state, year, month, direction
+    );
+
+    ui.monthLabel.style.opacity = "0";
+    ui.yearLabel.style.opacity = "0";
+
+    var cssDuration = cssVar("--transition-duration");
+    var cssStagger = cssVar("--stagger-step");
+
+    // Track timers so they can be cancelled.
+    var headerTimer = null;
+    var finishTimer = null;
+    var cancelled = false;
+
+    requestAnimationFrame(function() {
+        if (cancelled) return;
+
+        headerTimer = setTimeout(function() {
+            if (cancelled) return;
+            ui.monthLabel.textContent = MONTH_NAMES[month];
+            ui.yearLabel.textContent = year;
+            ui.monthLabel.style.opacity = "1";
+            ui.yearLabel.style.opacity = "1";
+        }, cssDuration * 0.4);
+    });
+
+    var totalDuration = cssDuration + DAYS * cssStagger;
+
+    finishTimer = setTimeout(function() {
+        if (cancelled) return;
+        finalizeGrid(ui.gridViewport, ui.state, calIncoming);
+        finalizeChart(ui.chartViewport, ui.state, chartTransition);
+        setActiveMonth(year, month);
+        ui.transitionCleanup = null;
+    }, totalDuration + 60);
+
+    // Store cleanup so this transition can be interrupted.
+    ui.transitionCleanup = function() {
+        cancelled = true;
+        clearTimeout(headerTimer);
+        clearTimeout(finishTimer);
+        finalizeGrid(ui.gridViewport, ui.state, calIncoming);
+        finalizeChart(ui.chartViewport, ui.state, chartTransition);
+        setActiveMonth(year, month);
+    };
+}
+
+function goToPrev() {
+    var y = ui.targetYear;
+    var m = ui.targetMonth - 1;
+    if (m < 0) {m = 11; y--;}
+    goTo(y, m, -1);
+}
+
+function goToNext() {
+    var y = ui.targetYear;
+    var m = ui.targetMonth + 1;
+    if (m > 11) {m = 0; y++;}
+    goTo(y, m, 1);
+}
+
+function goToToday() {
+    var now = new Date();
+    var y = now.getFullYear();
+    var m = now.getMonth();
+    if (y === ui.targetYear && m === ui.targetMonth) return;
+    var direction = (y * 12 + m) > (ui.targetYear * 12 + ui.targetMonth)
+        ? 1 : -1;
+    goTo(y, m, direction);
+}
+
+// --- Cycle loading ---
+
+function queueCyclesReload(options) {
+    ui.pendingCyclesReload = {
+        allowRefreshFromCache: !!options.allowRefreshFromCache,
+        forceNetwork: !!options.forceNetwork,
+        loadingText: options.loadingText || LOADING_TEXT,
+    };
+}
+
+function runPendingCyclesReload() {
+    if (!ui.pendingCyclesReload || ui.cyclesLoadInFlight) return;
+    var options = ui.pendingCyclesReload;
+    ui.pendingCyclesReload = null;
+    loadAndRenderCycles(options);
+}
+
+function loadAndRenderCycles(options) {
+    options = options || {};
+    var allowRefreshFromCache = !!options.allowRefreshFromCache;
+    var forceNetwork = !!options.forceNetwork;
+    var loadingText = options.loadingText || LOADING_TEXT;
+
+    if (ui.cyclesLoadInFlight) {
+        queueCyclesReload({
+            allowRefreshFromCache: allowRefreshFromCache,
+            forceNetwork: forceNetwork,
+            loadingText: loadingText,
+        });
+        return;
+    }
+
+    ui.cyclesLoadInFlight = true;
+    showHeaderLoading(loadingText);
+    var loadVersion = ui.mutationVersion;
+
+    loadCycleData(function(ok, fromCache) {
+        if (!ok) {
+            ui.cyclesLoadInFlight = false;
+            showHeaderError(LOAD_ERROR_MESSAGE);
+            runPendingCyclesReload();
+            return;
+        }
+
+        // Ignore stale loads that started before a newer mutation.
+        if (loadVersion !== ui.mutationVersion) {
+            ui.cyclesLoadInFlight = false;
+            runPendingCyclesReload();
+            return;
+        }
+
+        renderCurrentViews();
+        ui.initialCyclesReady = true;
+        maybeHideStartupOverlay();
+
+        if (allowRefreshFromCache && fromCache) {
+            loadCycleData(function(refreshOK) {
+                ui.cyclesLoadInFlight = false;
+                if (!refreshOK) {
+                    showHeaderError(LOAD_ERROR_MESSAGE);
+                    runPendingCyclesReload();
+                    return;
+                }
+
+                // Ignore stale refreshes that started before a newer mutation.
+                if (loadVersion !== ui.mutationVersion) {
+                    runPendingCyclesReload();
+                    return;
+                }
+
+                renderCurrentViews();
+                clearHeaderStatus();
+                runPendingCyclesReload();
+            }, {forceNetwork: true});
+            return;
+        }
+
+        ui.cyclesLoadInFlight = false;
+        clearHeaderStatus();
+        runPendingCyclesReload();
+    }, {forceNetwork: forceNetwork});
+}
+
+// --- Mutation handling ---
+
+function onMutationDone(newStart, mutation, ok) {
+    ui.mutationInFlight = false;
+    if (ok) {
+        // Re-fetch cycles from network only after save/delete confirmation.
+        loadAndRenderCycles({
+            allowRefreshFromCache: false,
+            forceNetwork: true,
+            loadingText: SAVING_TEXT,
+        });
+        return;
+    }
+
+    rollbackOptimisticMutation(newStart, mutation);
+    showHeaderError(SAVE_ERROR_MESSAGE);
+}
+
+function applyCycleStartMutation(cell) {
+    if (navigator.onLine === false) {
+        showMutationErrorDialog(OFFLINE_ERROR_MESSAGE);
+        return;
+    }
+
+    if (ui.mutationInFlight) {
+        showBusyShake();
+        return;
+    }
+
+    var newStart = parseCellDate(cell);
+    var mutation = applyOptimisticMutation(newStart);
+    ui.mutationInFlight = true;
+    ui.mutationVersion++;
+    showHeaderLoading(SAVING_TEXT);
+
+    var done = function(ok) {
+        onMutationDone(newStart, mutation, ok);
+    };
+
+    if (mutation.found) {
+        removeCycleStart(newStart, done);
+    } else {
+        addCycleStart(newStart, done);
+    }
+}
+
+// --- Touch/click handlers ---
+
+function resetTouchTapSequence() {
+    ui.touchTapCount = 0;
+    ui.touchTapLastAt = 0;
+    ui.touchTapLastDate = "";
+}
+
+function getTouchEndCell(e) {
+    if (!e.changedTouches || e.changedTouches.length === 0) return null;
+    var touch = e.changedTouches[0];
+    var el = document.elementFromPoint(touch.clientX, touch.clientY);
+    return el ? el.closest(".day") : null;
+}
+
+function handleTripleTapTouch(e) {
+    var cell = getTouchEndCell(e);
+    if (!cell || !cell.dataset.date) {
+        resetTouchTapSequence();
+        return;
+    }
+
+    var now = Date.now();
+    var dateKey = cell.dataset.date;
+    var isSameCell = dateKey === ui.touchTapLastDate;
+    var isWithinWindow = (now - ui.touchTapLastAt) <= TOUCH_TAP_WINDOW_MS;
+
+    ui.suppressClickUntil = now + TOUCH_CLICK_SUPPRESS_MS;
+
+    if (isSameCell && isWithinWindow) {
+        ui.touchTapCount++;
+    } else {
+        ui.touchTapCount = 1;
+    }
+
+    ui.touchTapLastDate = dateKey;
+    ui.touchTapLastAt = now;
+
+    if (ui.touchTapCount === 3) {
+        resetTouchTapSequence();
+        applyCycleStartMutation(cell);
+    }
+}
+
+function handleTripleClick(e) {
+    if (Date.now() < ui.suppressClickUntil) return;
+    if (e.detail !== 3) return;
+
+    var cell = e.target.closest(".day");
+    if (!cell || !cell.dataset.date) return;
+
+    applyCycleStartMutation(cell);
+}
+
+// --- Logo export ---
+
+var logoExportClicks = 0;
+var logoExportTimer = null;
+
+function handleLogoExportClick(e) {
+    e.preventDefault();
+    logoExportClicks++;
+    if (logoExportTimer) clearTimeout(logoExportTimer);
+    if (logoExportClicks >= 3) {
+        logoExportClicks = 0;
+        var data = JSON.stringify({
+            strategy: cycleStrategy,
+            dates: cycleData.map(formatDate)
+        }, null, 2);
+        var blob = new Blob([data], {type: "application/json"});
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = formatDate(new Date()) + ".json";
+        a.click();
+        URL.revokeObjectURL(url);
+        return;
+    }
+    logoExportTimer = setTimeout(function() { logoExportClicks = 0; }, 2000);
+}
+
+// --- Service worker ---
+
+function setupServiceWorker() {
+    if (!("serviceWorker" in navigator)) return;
+
+    function cacheAppURLs() {
+        var urls = [
+            window.location.href,
+            "/cycles?token=" + encodeURIComponent(getToken()),
+        ];
+        var sw = navigator.serviceWorker.controller;
+        if (sw) {
+            urls.forEach(function(u) {
+                sw.postMessage({type: "cache-page", url: u});
+            });
+        } else {
+            navigator.serviceWorker.addEventListener("controllerchange", function() {
+                urls.forEach(function(u) {
+                    navigator.serviceWorker.controller.postMessage(
+                        {type: "cache-page", url: u}
+                    );
+                });
+            }, {once: true});
+        }
+    }
+
+    function registerServiceWorker() {
+        navigator.serviceWorker.register("/static/sw.js", {scope: "/"})
+            .then(cacheAppURLs)
+            .catch(function(err) {
+                console.warn("Service worker registration failed:", err);
+            });
+    }
+
+    if (document.readyState === "complete") {
+        registerServiceWorker();
+        return;
+    }
+
+    window.addEventListener("load", registerServiceWorker, {once: true});
+}
+
+// --- Event wiring ---
+
+function wireNavigation() {
+    document.getElementById("prevBtn").addEventListener("click", goToPrev);
+    document.getElementById("nextBtn").addEventListener("click", goToNext);
+    document.getElementById("todayBtn").addEventListener("click", goToToday);
+    bindCalendarNavigation(
+        document.getElementById("calendar"), goToPrev, goToNext
+    );
+}
+
+function wireResizeSync() {
+    window.addEventListener("resize", syncGridHeight);
+}
+
+function wireErrorDialog() {
+    if (ui.mutationErrorCloseBtn && ui.mutationErrorDialog) {
+        ui.mutationErrorCloseBtn.addEventListener("click", function() {
+            ui.mutationErrorDialog.close();
+        });
+    }
+}
+
+function wireGridMutationHandlers() {
+    // Triple-click/triple-tap on a day cell to mark that date as a new cycle start.
+    ui.gridViewport.addEventListener("click", handleTripleClick);
+    ui.gridViewport.addEventListener("touchend", handleTripleTapTouch, {passive: true});
+}
+
+function wireLogoExport() {
+    // Triple-click on the logo to export cycle data as JSON.
+    document.getElementById("logo").addEventListener("click", handleLogoExportClick);
+}
+
+function wireAssetsReady() {
+    if (!ui.initialAssetsReady) {
+        window.addEventListener("load", onAssetsLoadComplete, {once: true});
+    } else {
+        maybeHideStartupOverlay();
+    }
+}
+
+// --- Initialization ---
+
+function initCurrentMonth() {
+    var now = new Date();
+    ui.currentYear = now.getFullYear();
+    ui.currentMonth = now.getMonth();
+    ui.targetYear = ui.currentYear;
+    ui.targetMonth = ui.currentMonth;
+}
+
+function renderInitialUI() {
+    initCalendar(
+        document.getElementById("weekdays"), ui.state, ui.currentYear, ui.currentMonth
+    );
+    updateHeader(ui.currentYear, ui.currentMonth);
+
+    var initialBars = buildChartData(ui.currentYear, ui.currentMonth);
+    renderChart(ui.state.chart, initialBars, true);
+
+    setTimeout(function() {
+        syncGridHeight();
+        document.getElementById("prevBtn").classList.remove("nav-btn-loading");
+        document.getElementById("nextBtn").classList.remove("nav-btn-loading");
+    }, cssVar("--transition-duration"));
+}
+
 // Application initialization — called after all other scripts are loaded.
 function initApp() {
     initUI();
 }
 
 function initUI() {
-    var LOAD_ERROR_MESSAGE = "✖︎ Error loading cycles";
-    var SAVE_ERROR_MESSAGE = "✖︎ Error saving cycle";
-    var LOADING_TEXT = "Loading...";
-    var SAVING_TEXT = "Saving...";
-    var OFFLINE_ERROR_MESSAGE =
-        "Cycle dates cannot be changed when you are offline.";
-
-    // State.
-    var currentYear;
-    var currentMonth;
-    var targetYear;
-    var targetMonth;
-    var transitionCleanup = null;
-    var mutationInFlight = false;
-    var touchTapCount = 0;
-    var touchTapLastAt = 0;
-    var touchTapLastDate = "";
-    var suppressClickUntil = 0;
-
-    var TOUCH_TAP_WINDOW_MS = 420;
-    var TOUCH_CLICK_SUPPRESS_MS = 700;
-
-    // DOM references.
-    var monthLabel = document.getElementById("monthLabel");
-    var yearLabel = document.getElementById("yearLabel");
-    var gridViewport = document.getElementById("gridViewport");
-    var chartViewport = document.getElementById("chartViewport");
-    var headerStatus = document.getElementById("headerStatus");
-    var headerStatusText = document.getElementById("headerStatusText");
-    var startupOverlay = document.getElementById("startupOverlay");
-    var startupOverlayText = document.getElementById("startupOverlayText");
-    var mutationErrorDialog = document.getElementById("mutationErrorDialog");
-    var mutationErrorTitle = document.getElementById("mutationErrorTitle");
-    var mutationErrorCloseBtn = document.getElementById("mutationErrorCloseBtn");
-
-    // Mutable reference to the active grid and chart layers.
-    var state = {
-        grid: document.getElementById("gridCurrent"),
-        chart: document.getElementById("chartCurrent")
-    };
-
-    var cyclesLoadInFlight = false;
-    var headerStatusClearTimer = null;
-    var pendingCyclesReload = null;
-    var mutationVersion = 0;
-    var initialAssetsReady = document.readyState === "complete";
-    var initialCyclesReady = false;
-
-    if (startupOverlayText) {
-        startupOverlayText.textContent = LOADING_TEXT;
-    }
-
-    function maybeHideStartupOverlay() {
-        if (!startupOverlay) return;
-        if (!initialAssetsReady || !initialCyclesReady) return;
-        startupOverlay.classList.add("hidden");
-    }
-
-    function cancelHeaderStatusClear() {
-        if (headerStatusClearTimer !== null) {
-            clearTimeout(headerStatusClearTimer);
-            headerStatusClearTimer = null;
-        }
-    }
-
-    function clearHeaderStatus() {
-        if (!headerStatus || !headerStatusText) return;
-        cancelHeaderStatusClear();
-        headerStatus.classList.remove("visible");
-        headerStatusClearTimer = setTimeout(function() {
-            headerStatus.classList.remove("error");
-            headerStatusText.textContent = "";
-            headerStatusClearTimer = null;
-        }, 130);
-    }
-
-    function showHeaderLoading(text) {
-        if (!headerStatus || !headerStatusText) return;
-        cancelHeaderStatusClear();
-        headerStatus.classList.add("visible");
-        headerStatus.classList.remove("error");
-        headerStatusText.textContent = text || LOADING_TEXT;
-    }
-
-    function showHeaderError(message) {
-        if (!headerStatus || !headerStatusText) return;
-        cancelHeaderStatusClear();
-        headerStatus.classList.add("visible");
-        headerStatus.classList.add("error");
-        headerStatusText.textContent = message;
-    }
-
-    function updateHeader(year, month) {
-        monthLabel.textContent = MONTH_NAMES[month];
-        yearLabel.textContent = year;
-        monthLabel.style.opacity = "1";
-        yearLabel.style.opacity = "1";
-    }
-
-    function syncGridHeight() {
-        gridViewport.style.height = state.grid.offsetHeight + "px";
-    }
-
-    function setActiveMonth(year, month) {
-        currentYear = year;
-        currentMonth = month;
-        targetYear = year;
-        targetMonth = month;
-        updateHeader(year, month);
-    }
-
-    function renderCurrentViews() {
-        var days = buildDays(currentYear, currentMonth);
-        renderGrid(state.grid, days, false);
-        var bars = buildChartData(currentYear, currentMonth);
-        renderChart(state.chart, bars, false);
-        syncGridHeight();
-    }
-
-    function showMutationErrorDialog(message) {
-        if (mutationErrorTitle && message) {
-            mutationErrorTitle.textContent = message;
-        }
-        if (mutationErrorDialog && !mutationErrorDialog.open) {
-            mutationErrorDialog.showModal();
-        }
-    }
-
-    function showBusyShake() {
-        document.body.classList.remove("page-busy-shake");
-        // Force reflow so repeated interactions can replay the animation.
-        void document.body.offsetWidth;
-        document.body.classList.add("page-busy-shake");
-    }
-
-    function parseCellDate(cell) {
-        var parts = cell.dataset.date.split("-");
-        return new Date(
-            parseInt(parts[0], 10),
-            parseInt(parts[1], 10) - 1,
-            parseInt(parts[2], 10)
-        );
-    }
-
-    function findCycleStartIndex(date) {
-        for (var i = 0; i < cycleData.length; i++) {
-            if (cycleData[i].getTime() === date.getTime()) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    function applyOptimisticMutation(newStart) {
-        var foundIndex = findCycleStartIndex(newStart);
-        var found = foundIndex !== -1;
-
-        if (found) {
-            cycleData.splice(foundIndex, 1);
-        } else {
-            cycleData.push(newStart);
-            cycleData.sort(function(a, b) {return a - b;});
-        }
-
-        renderCurrentViews();
-        return {found: found, foundIndex: foundIndex};
-    }
-
-    function rollbackOptimisticMutation(newStart, mutation) {
-        if (mutation.found) {
-            cycleData.splice(mutation.foundIndex, 0, newStart);
-        } else {
-            var rollbackIndex = findCycleStartIndex(newStart);
-            if (rollbackIndex !== -1) {
-                cycleData.splice(rollbackIndex, 1);
-            }
-        }
-
-        renderCurrentViews();
-    }
-
-    function wireErrorDialog() {
-        if (mutationErrorCloseBtn && mutationErrorDialog) {
-            mutationErrorCloseBtn.addEventListener("click", function() {
-                mutationErrorDialog.close();
-            });
-        }
-    }
-
-    // Cancel any running transition and snap to its target state.
-    function cancelTransition() {
-        if (!transitionCleanup) return;
-        transitionCleanup();
-        transitionCleanup = null;
-    }
-
-    // Navigate to a given month with a directional slide animation.
-    function goTo(year, month, direction) {
-        if (year === targetYear && month === targetMonth) return;
-
-        if (transitionCleanup) {
-            cancelTransition();
-        }
-
-        targetYear = year;
-        targetMonth = month;
-
-        // Start chart transition.
-        var chartTransition = transitionChart(
-            chartViewport, state, year, month, direction,
-            currentYear, currentMonth
-        );
-
-        // Start calendar transition.
-        var calIncoming = transitionGrid(
-            gridViewport, state, year, month, direction
-        );
-
-        monthLabel.style.opacity = "0";
-        yearLabel.style.opacity = "0";
-
-        var cssDuration = cssVar("--transition-duration");
-        var cssStagger = cssVar("--stagger-step");
-
-        // Track timers so they can be cancelled.
-        var headerTimer = null;
-        var finishTimer = null;
-        var cancelled = false;
-
-        requestAnimationFrame(function() {
-            if (cancelled) return;
-
-            headerTimer = setTimeout(function() {
-                if (cancelled) return;
-                monthLabel.textContent = MONTH_NAMES[month];
-                yearLabel.textContent = year;
-                monthLabel.style.opacity = "1";
-                yearLabel.style.opacity = "1";
-            }, cssDuration * 0.4);
-        });
-
-        var totalDuration = cssDuration + DAYS * cssStagger;
-
-        finishTimer = setTimeout(function() {
-            if (cancelled) return;
-            finalizeGrid(gridViewport, state, calIncoming);
-            finalizeChart(chartViewport, state, chartTransition);
-            setActiveMonth(year, month);
-            transitionCleanup = null;
-        }, totalDuration + 60);
-
-        // Store cleanup so this transition can be interrupted.
-        transitionCleanup = function() {
-            cancelled = true;
-            clearTimeout(headerTimer);
-            clearTimeout(finishTimer);
-            finalizeGrid(gridViewport, state, calIncoming);
-            finalizeChart(chartViewport, state, chartTransition);
-            setActiveMonth(year, month);
-        };
-    }
-
-    function goToPrev() {
-        var y = targetYear;
-        var m = targetMonth - 1;
-        if (m < 0) {m = 11; y--;}
-        goTo(y, m, -1);
-    }
-
-    function goToNext() {
-        var y = targetYear;
-        var m = targetMonth + 1;
-        if (m > 11) {m = 0; y++;}
-        goTo(y, m, 1);
-    }
-
-    function goToToday() {
-        var now = new Date();
-        var y = now.getFullYear();
-        var m = now.getMonth();
-        if (y === targetYear && m === targetMonth) return;
-        var direction = (y * 12 + m) > (targetYear * 12 + targetMonth)
-            ? 1 : -1;
-        goTo(y, m, direction);
-    }
-
-    function wireNavigation() {
-        // Button events.
-        document.getElementById("prevBtn").addEventListener("click", goToPrev);
-        document.getElementById("nextBtn").addEventListener("click", goToNext);
-        document.getElementById("todayBtn").addEventListener("click", goToToday);
-
-        // Keyboard, wheel and touch navigation.
-        bindCalendarNavigation(
-            document.getElementById("calendar"), goToPrev, goToNext
-        );
-    }
-
-    function initCurrentMonth() {
-        var now = new Date();
-        currentYear = now.getFullYear();
-        currentMonth = now.getMonth();
-        targetYear = currentYear;
-        targetMonth = currentMonth;
-    }
-
-    function renderInitialUI() {
-        initCalendar(
-            document.getElementById("weekdays"), state, currentYear, currentMonth
-        );
-        updateHeader(currentYear, currentMonth);
-
-        var initialBars = buildChartData(currentYear, currentMonth);
-        renderChart(state.chart, initialBars, true);
-
-        setTimeout(function() {
-            syncGridHeight();
-            document.getElementById("prevBtn").classList.remove("nav-btn-loading");
-            document.getElementById("nextBtn").classList.remove("nav-btn-loading");
-        }, cssVar("--transition-duration"));
-    }
-
-    function wireResizeSync() {
-        window.addEventListener("resize", function() {
-            syncGridHeight();
-        });
-    }
-
-    function queueCyclesReload(options) {
-        pendingCyclesReload = {
-            allowRefreshFromCache: !!options.allowRefreshFromCache,
-            forceNetwork: !!options.forceNetwork,
-            loadingText: options.loadingText || LOADING_TEXT,
-        };
-    }
-
-    function runPendingCyclesReload() {
-        if (!pendingCyclesReload || cyclesLoadInFlight) return;
-        var options = pendingCyclesReload;
-        pendingCyclesReload = null;
-        loadAndRenderCycles(options);
-    }
-
-    function loadAndRenderCycles(options) {
-        options = options || {};
-        var allowRefreshFromCache = !!options.allowRefreshFromCache;
-        var forceNetwork = !!options.forceNetwork;
-        var loadingText = options.loadingText || LOADING_TEXT;
-
-        if (cyclesLoadInFlight) {
-            queueCyclesReload({
-                allowRefreshFromCache: allowRefreshFromCache,
-                forceNetwork: forceNetwork,
-                loadingText: loadingText,
-            });
-            return;
-        }
-
-        cyclesLoadInFlight = true;
-        showHeaderLoading(loadingText);
-        var loadVersion = mutationVersion;
-
-        loadCycleData(function(ok, fromCache) {
-            if (!ok) {
-                cyclesLoadInFlight = false;
-                showHeaderError(LOAD_ERROR_MESSAGE);
-                runPendingCyclesReload();
-                return;
-            }
-
-            // Ignore stale loads that started before a newer mutation.
-            if (loadVersion !== mutationVersion) {
-                cyclesLoadInFlight = false;
-                runPendingCyclesReload();
-                return;
-            }
-
-            renderCurrentViews();
-            initialCyclesReady = true;
-            maybeHideStartupOverlay();
-
-            if (allowRefreshFromCache && fromCache) {
-                loadCycleData(function(refreshOK) {
-                    cyclesLoadInFlight = false;
-                    if (!refreshOK) {
-                        showHeaderError(LOAD_ERROR_MESSAGE);
-                        runPendingCyclesReload();
-                        return;
-                    }
-
-                    // Ignore stale refreshes that started before a newer mutation.
-                    if (loadVersion !== mutationVersion) {
-                        runPendingCyclesReload();
-                        return;
-                    }
-
-                    renderCurrentViews();
-                    clearHeaderStatus();
-                    runPendingCyclesReload();
-                }, {forceNetwork: true});
-                return;
-            }
-
-            cyclesLoadInFlight = false;
-            clearHeaderStatus();
-            runPendingCyclesReload();
-        }, {forceNetwork: forceNetwork});
-    }
-
-    function onMutationDone(newStart, mutation, ok) {
-        mutationInFlight = false;
-        if (ok) {
-            // Re-fetch cycles from network only after save/delete confirmation.
-            loadAndRenderCycles({
-                allowRefreshFromCache: false,
-                forceNetwork: true,
-                loadingText: SAVING_TEXT,
-            });
-            return;
-        }
-
-        rollbackOptimisticMutation(newStart, mutation);
-        showHeaderError(SAVE_ERROR_MESSAGE);
-    }
-
-    function applyCycleStartMutation(cell) {
-        if (navigator.onLine === false) {
-            showMutationErrorDialog(OFFLINE_ERROR_MESSAGE);
-            return;
-        }
-
-        if (mutationInFlight) {
-            showBusyShake();
-            return;
-        }
-
-        var newStart = parseCellDate(cell);
-        var mutation = applyOptimisticMutation(newStart);
-        mutationInFlight = true;
-        mutationVersion++;
-        showHeaderLoading(SAVING_TEXT);
-
-        var done = function(ok) {
-            onMutationDone(newStart, mutation, ok);
-        };
-
-        if (mutation.found) {
-            removeCycleStart(newStart, done);
-        } else {
-            addCycleStart(newStart, done);
-        }
-    }
-
-    function resetTouchTapSequence() {
-        touchTapCount = 0;
-        touchTapLastAt = 0;
-        touchTapLastDate = "";
-    }
-
-    function getTouchEndCell(e) {
-        if (!e.changedTouches || e.changedTouches.length === 0) return null;
-        var touch = e.changedTouches[0];
-        var el = document.elementFromPoint(touch.clientX, touch.clientY);
-        return el ? el.closest(".day") : null;
-    }
-
-    function handleTripleTapTouch(e) {
-        var cell = getTouchEndCell(e);
-        if (!cell || !cell.dataset.date) {
-            resetTouchTapSequence();
-            return;
-        }
-
-        var now = Date.now();
-        var dateKey = cell.dataset.date;
-        var isSameCell = dateKey === touchTapLastDate;
-        var isWithinWindow = (now - touchTapLastAt) <= TOUCH_TAP_WINDOW_MS;
-
-        suppressClickUntil = now + TOUCH_CLICK_SUPPRESS_MS;
-
-        if (isSameCell && isWithinWindow) {
-            touchTapCount++;
-        } else {
-            touchTapCount = 1;
-        }
-
-        touchTapLastDate = dateKey;
-        touchTapLastAt = now;
-
-        if (touchTapCount === 3) {
-            resetTouchTapSequence();
-            applyCycleStartMutation(cell);
-        }
-    }
-
-    function handleTripleClick(e) {
-        if (Date.now() < suppressClickUntil) return;
-        if (e.detail !== 3) return;
-
-        var cell = e.target.closest(".day");
-        if (!cell || !cell.dataset.date) return;
-
-        applyCycleStartMutation(cell);
-    }
-
-    function setupServiceWorker() {
-        if (!("serviceWorker" in navigator)) return;
-
-        function cacheAppURLs() {
-            var urls = [
-                window.location.href,
-                "/cycles?token=" + encodeURIComponent(getToken()),
-            ];
-            var sw = navigator.serviceWorker.controller;
-            if (sw) {
-                urls.forEach(function(u) {
-                    sw.postMessage({type: "cache-page", url: u});
-                });
-            } else {
-                navigator.serviceWorker.addEventListener("controllerchange", function() {
-                    urls.forEach(function(u) {
-                        navigator.serviceWorker.controller.postMessage(
-                            {type: "cache-page", url: u}
-                        );
-                    });
-                }, {once: true});
-            }
-        }
-
-        function registerServiceWorker() {
-            navigator.serviceWorker.register("/static/sw.js", {scope: "/"})
-                .then(cacheAppURLs)
-                .catch(function(err) {
-                    console.warn("Service worker registration failed:", err);
-                });
-        }
-
-        if (document.readyState === "complete") {
-            registerServiceWorker();
-            return;
-        }
-
-        window.addEventListener("load", registerServiceWorker, {once: true});
+    ui = createUIState();
+    if (ui.startupOverlayText) {
+        ui.startupOverlayText.textContent = LOADING_TEXT;
     }
 
     wireNavigation();
@@ -767,19 +842,9 @@ function initUI() {
     renderInitialUI();
     wireResizeSync();
     wireErrorDialog();
+    wireGridMutationHandlers();
+    wireLogoExport();
     setupServiceWorker();
     loadAndRenderCycles({allowRefreshFromCache: true, forceNetwork: false});
-
-    if (!initialAssetsReady) {
-        window.addEventListener("load", function() {
-            initialAssetsReady = true;
-            maybeHideStartupOverlay();
-        }, {once: true});
-    } else {
-        maybeHideStartupOverlay();
-    }
-
-    // Triple-click/triple-tap on a day cell to mark that date as a new cycle start.
-    gridViewport.addEventListener("click", handleTripleClick);
-    gridViewport.addEventListener("touchend", handleTripleTapTouch, {passive: true});
+    wireAssetsReady();
 }

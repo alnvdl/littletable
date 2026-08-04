@@ -109,8 +109,8 @@ func (a *App) Load(r io.Reader) error {
 
 	err := json.NewDecoder(r).Decode(&a.db)
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		// Ignoring a corrupted or empty file is intentional: we prefer to
-		// lose all data than prevent the application from starting.
+		// Ignoring a corrupted or empty file is intentional: we prefer to lose
+		// all data than prevent the application from starting.
 		a.db.Cycles = make(map[string][]string)
 		return nil
 	} else if err != nil {

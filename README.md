@@ -12,7 +12,7 @@ deployed as a single-binary Go application with all static assets embedded.
 Data is stored in a JSON file that is periodically auto-saved.
 
 ## Running
-To run Littletable locally, install Go 1.25+ and run `make dev`.
+To run Littletable locally, install Go 1.27+ and run `make dev`.
 
 To access the web interface, go to http://localhost:8080/?token=alice.
 
